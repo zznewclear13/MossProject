@@ -11,6 +11,8 @@ Shader "zznewclear13/BasicGGXBRDFShader"
         _RoughnessIntensity ("Roughness Intensity", range(0, 1)) = 1
         _MetallicMap ("Metallic Map", 2D) = "black" {}
         _MetallicIntensity ("Metallic Intensity", range(0, 1)) = 1
+        _OcclusionMap("Occlusion Map", 2D) = "white" {}
+        _OcclusionIntensity("Occlusion Intensity", range(0, 1)) = 1
     }
 
     HLSLINCLUDE
@@ -21,12 +23,14 @@ Shader "zznewclear13/BasicGGXBRDFShader"
     sampler2D _BumpMap;
     sampler2D _RoughnessMap;
     sampler2D _MetallicMap;
+    sampler2D _OcclusionMap;
     CBUFFER_START(UnityPerMaterial)
     float4 _BaseColor;
     float4 _BaseMap_ST;
     float _BumpIntensity;
     float _RoughnessIntensity;
     float _MetallicIntensity;
+    float _OcclusionIntensity;
     CBUFFER_END
 
     ENDHLSL
@@ -52,16 +56,16 @@ Shader "zznewclear13/BasicGGXBRDFShader"
 
             #pragma multi_compile _ LIGHTMAP_ON
 
-            #pragma vertex LitPassVert
-            #pragma fragment LitPassFrag
+            #pragma vertex LitPassVertex
+            #pragma fragment LitPassFragment
 
             struct Attributes
             {
-                float4 positionOS   : POSITION;
-                float3 normalOS     : NORMAL;
-                float4 tangentOS    : TANGENT;
-                float2 texcoord     : TEXCOORD0;
-                float2 staticLightmapUV   : TEXCOORD1;
+                float4 positionOS           : POSITION;
+                float3 normalOS             : NORMAL;
+                float4 tangentOS            : TANGENT;
+                float2 texcoord             : TEXCOORD0;
+                float2 staticLightmapUV     : TEXCOORD1;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -112,7 +116,7 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 return d * g * f;
             }
 
-            Varyings LitPassVert(Attributes input)
+            Varyings LitPassVertex(Attributes input)
             {
                 Varyings output = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(input);
@@ -135,7 +139,7 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 return output;
             }
 
-            float4 LitPassFrag(Varyings input) : SV_TARGET
+            float4 LitPassFragment(Varyings input) : SV_TARGET
             {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
@@ -161,6 +165,8 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 float roughness = max(roughnessMap * _RoughnessIntensity, 1e-2);
                 float metallicMap = tex2D(_MetallicMap, input.uv).r;
                 float metallic = metallicMap * _MetallicIntensity;
+                float occlusionMap = tex2D(_OcclusionMap, input.uv).r;
+                float occlusion = occlusionMap * _OcclusionIntensity;
 
                 float oneMinusReflectivity = kDieletricSpec.a * (1 - metallic);
                 float reflectivity = 1.0 - oneMinusReflectivity;
@@ -172,7 +178,7 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 MixRealtimeAndBakedGI(mainLight, normalWS, bakedGI);
                 float3 giDiffuse = bakedGI;
                 float3 reflectVector = reflect(-viewDirWS, normalWS);
-                float3 giSpecular = GlossyEnvironmentReflection(reflectVector, positionWS, roughness, 1.0);
+                float3 giSpecular = GlossyEnvironmentReflection(reflectVector, roughness, 1.0);
 
                 //directional lights
                 float3 directDiffuse = diffuse;
@@ -189,18 +195,164 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 float3 indirectSpecular = giSpecular * surfaceReduction * lerp(specular, grazingTerm, fresnelTerm);
 
                 //final compose
-                float3 directBRDF = (directDiffuse + directSpecular) * mainLight.color * atten * ndotl;;//(directSpecular + directDiffuse) * mainLight.color * atten * ndotl;
+                float3 directBRDF = (directDiffuse + directSpecular) * mainLight.color * atten * ndotl;//(directSpecular + directDiffuse) * mainLight.color * atten * ndotl;
                 float3 indirectBRDF = indirectDiffse + indirectSpecular;
 
-                float3 finalColor = directBRDF + indirectBRDF;
+                float3 finalColor = (directBRDF + indirectBRDF) * occlusion;
                 return float4(finalColor, 1.0);
             }
 
             ENDHLSL
         }
 
-        UsePass "Universal Render Pipeline/Lit/ShadowCaster"
-        UsePass "Universal Render Pipeline/Lit/DepthOnly"
-        UsePass "Universal Render Pipeline/Lit/Meta"
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags{"LightMode" = "ShadowCaster"}
+
+            HLSLPROGRAM
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/CommonMaterial.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #pragma vertex ShadowPassVertex
+            #pragma fragment ShadowPassFragment
+
+            float3 _LightDirection;
+
+            struct Attributes
+            {
+                float4 positionOS   : POSITION;
+                float3 normalOS     : NORMAL;
+                float4 tangentOS    : TANGENT;
+                float2 texcoord     : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct Varyings
+            {
+                float2 uv           : TEXCOORD0;
+                float4 positionCS   : SV_POSITION;
+            };
+
+            Varyings ShadowPassVertex(Attributes input)
+            {
+                Varyings output;
+                UNITY_SETUP_INSTANCE_ID(input);
+
+                VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
+                VertexNormalInputs normalInput = GetVertexNormalInputs(input.normalOS, input.tangentOS);
+
+                output.uv = TRANSFORM_TEX(input.texcoord, _BaseMap);
+                output.positionCS = TransformWorldToHClip(ApplyShadowBias(vertexInput.positionWS, normalInput.normalWS, _LightDirection));
+                return output;
+            }
+
+            half4 ShadowPassFragment(Varyings input) : SV_TARGET
+            {
+                return 0.0;
+            }
+
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags{"LightMode" = "DepthOnly"}
+
+            HLSLPROGRAM
+            #pragma vertex DepthOnlyVertex
+            #pragma fragment DepthOnlyFragment
+
+            struct Attributes
+            {
+                float4 position     : POSITION;
+                float2 texcoord     : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct Varyings
+            {
+                float2 uv           : TEXCOORD0;
+                float4 positionCS   : SV_POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            Varyings DepthOnlyVertex(Attributes input)
+            {
+                Varyings output = (Varyings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+                output.uv = TRANSFORM_TEX(input.texcoord, _BaseMap);
+                output.positionCS = TransformObjectToHClip(input.position.xyz);
+                return output;
+            }
+
+            half4 DepthOnlyFragment(Varyings input) : SV_TARGET
+            {
+                return 0.0;
+            }
+
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "Meta"
+            Tags{"LightMode" = "Meta"}
+
+            HLSLPROGRAM
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MetaInput.hlsl"
+
+            #pragma vertex MetaVertex
+            #pragma fragment MetaFragment
+
+            struct Attributes
+            {
+                float4 positionOS   : POSITION;
+                float3 normalOS     : NORMAL;
+                float2 uv0          : TEXCOORD0;
+                float2 uv1          : TEXCOORD1;
+                float2 uv2          : TEXCOORD2;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS   : SV_POSITION;
+                float2 uv           : TEXCOORD0;
+            };
+
+            Varyings MetaVertex(Attributes input)
+            {
+                Varyings output;
+                output.positionCS = MetaVertexPosition(input.positionOS, input.uv1, input.uv2, unity_LightmapST, unity_DynamicLightmapST);
+                output.uv = TRANSFORM_TEX(input.uv0, _BaseMap);
+                return output;
+            }
+
+            half4 MetaFragment(Varyings input) : SV_Target
+            {
+                //material properties
+                float4 baseMap = tex2D(_BaseMap, input.uv);
+                float roughnessMap = tex2D(_RoughnessMap, input.uv).r;
+                float roughness = max(roughnessMap * _RoughnessIntensity, 1e-2);
+                float metallicMap = tex2D(_MetallicMap, input.uv).r;
+                float metallic = metallicMap * _MetallicIntensity;
+
+                float oneMinusReflectivity = kDieletricSpec.a * (1 - metallic);
+                float reflectivity = 1.0 - oneMinusReflectivity;
+                float3 diffuse = baseMap.rgb * oneMinusReflectivity;
+                float3 specular = lerp(kDieletricSpec.rgb, baseMap.rgb, metallic);
+
+                MetaInput metaInput;
+                metaInput.Albedo = diffuse;
+                metaInput.SpecularColor = specular;
+                metaInput.Emission = 0;
+                return MetaFragment(metaInput);
+            }
+
+            ENDHLSL
+        }
     }
 }
