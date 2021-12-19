@@ -73,7 +73,9 @@ Shader "zznewclear13/BasicGGXBRDFShader"
             {
                 float4 positionCS               : SV_POSITION;
                 float2 uv                       : TEXCOORD0;
-                float4 tbnAndPositionWS[3]      : TEXCOORD1; //1, 2, 3
+                float3 positionWS               : TEXCOORD1;
+                float3 normalWS                 : TEXCOORD2;
+                float4 tangentWS                : TEXCOORD3;
                 float4 shadowCoord              : TEXCOORD4;
                 DECLARE_LIGHTMAP_OR_SH(staticLightmapUV, vertexSH, 5);
 
@@ -128,9 +130,9 @@ Shader "zznewclear13/BasicGGXBRDFShader"
 
                 output.positionCS = vertexInput.positionCS;
                 output.uv = TRANSFORM_TEX(input.texcoord, _BaseMap);
-                output.tbnAndPositionWS[0] = float4(normalInput.tangentWS.x, normalInput.bitangentWS.x, normalInput.normalWS.x, vertexInput.positionWS.x);
-                output.tbnAndPositionWS[1] = float4(normalInput.tangentWS.y, normalInput.bitangentWS.y, normalInput.normalWS.y, vertexInput.positionWS.y);
-                output.tbnAndPositionWS[2] = float4(normalInput.tangentWS.z, normalInput.bitangentWS.z, normalInput.normalWS.z, vertexInput.positionWS.z);
+                output.positionWS = vertexInput.positionWS;
+                output.normalWS = normalInput.normalWS;
+                output.tangentWS = float4(normalInput.tangentWS, input.tangentOS.w);
                 output.shadowCoord = TransformWorldToShadowCoord(vertexInput.positionWS);
                 
                 OUTPUT_LIGHTMAP_UV(input.staticLightmapUV, unity_LightmapST, output.staticLightmapUV);
@@ -145,7 +147,7 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
                 //wo
-                float3 positionWS = float3(input.tbnAndPositionWS[0].w, input.tbnAndPositionWS[1].w, input.tbnAndPositionWS[2].w);
+                float3 positionWS = input.positionWS;
                 float3 viewDirWS = GetWorldSpaceNormalizeViewDir(positionWS);
                 
                 //wi
@@ -156,8 +158,9 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 //normal
                 float3 normalMap = UnpackNormal(tex2D(_BumpMap, input.uv));
                 normalMap.xy *= _BumpIntensity;
-                float3 normalWS = mul(float3x3(input.tbnAndPositionWS[0].xyz, input.tbnAndPositionWS[1].xyz, input.tbnAndPositionWS[2].xyz), normalMap);
-                normalWS = normalize(normalWS);
+                float3 bitangentWS = cross(input.normalWS, input.tangentWS.xyz) * input.tangentWS.w;
+                float3x3 tbn = float3x3(normalize(input.tangentWS.xyz), normalize(bitangentWS), normalize(input.normalWS));
+                float3 normalWS = mul(normalMap, tbn);
 
                 //material properties
                 float4 baseMap = tex2D(_BaseMap, input.uv);
