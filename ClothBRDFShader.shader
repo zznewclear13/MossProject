@@ -1,4 +1,4 @@
-Shader "zznewclear13/BasicGGXBRDFShader"
+Shader "zznewclear13/ClothBRDFShader"
 {
     Properties
     {
@@ -11,6 +11,12 @@ Shader "zznewclear13/BasicGGXBRDFShader"
         _RoughnessIntensity ("Roughness Intensity", range(0, 1)) = 1
         _MetallicMap ("Metallic Map", 2D) = "black" {}
         _MetallicIntensity ("Metallic Intensity", range(0, 1)) = 1
+
+        _FuzzColor ("Fuzz Color", color) = (1, 1, 1, 1)
+        _FuzzMap ("Fuzz Map", 2D) = "black" {}
+        _FuzzIntensity ("Fuzz Intensity", range(0, 1)) = 1
+
+        _ScatterDensity ("Scattering Density", range(0, 0.2)) = 0.1
     }
 
     HLSLINCLUDE
@@ -21,12 +27,16 @@ Shader "zznewclear13/BasicGGXBRDFShader"
     sampler2D _BumpMap;
     sampler2D _RoughnessMap;
     sampler2D _MetallicMap;
+    sampler2D _FuzzMap;
     CBUFFER_START(UnityPerMaterial)
     float4 _BaseColor;
     float4 _BaseMap_ST;
     float _BumpIntensity;
     float _RoughnessIntensity;
     float _MetallicIntensity;
+    float4 _FuzzColor;
+    float _FuzzIntensity;
+    float _ScatterDensity;
     CBUFFER_END
 
     ENDHLSL
@@ -81,16 +91,16 @@ Shader "zznewclear13/BasicGGXBRDFShader"
 
             float D(float ndoth, float roughness)
             {
-                float a2 = roughness * roughness;
-                float d = max(1e-16, ndoth * ndoth * (a2 - 1) + 1);
-                return a2 * rcp(d * d);
+                float a = ndoth * roughness;
+                float k = roughness / (1.0 - ndoth * ndoth + a * a);
+                return k * k;
             }
 
             float G(float ndotl, float ndotv, float roughness)
             {
                 float a2 = roughness * roughness;
-                float gv = ndotv * sqrt((ndotl - a2 * ndotl) * ndotl + a2);
-                float gl = ndotl * sqrt((ndotv - a2 * ndotv) * ndotl + a2);
+                float gv = ndotv * sqrt((1.0 - a2) * ndotl * ndotl + a2);
+                float gl = ndotl * sqrt((1.0 - a2) * ndotv * ndotv + a2);
                 return 0.5 * rcp(gv + gl);
             }
 
@@ -102,7 +112,7 @@ Shader "zznewclear13/BasicGGXBRDFShader"
             float3 GGXBRDF(float3 wi, float3 wo, float3 normal, float3 specular, float roughness)
             {
                 float3 h = normalize(wi + wo);
-                float ndotv = abs(dot(normal, wo)) + 1e-5;
+                float ndotv = max(dot(normal, wo), 1e-5);
                 float ndoth = max(dot(normal, h), 0.0);
                 float ndotl = max(dot(normal, wi), 0.0);
                 float hdotl = max(dot(h, wi), 0.0);
@@ -137,6 +147,18 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 return output;
             }
 
+            float GScatter(float ndotv, float ndotl, float scatterDensity)
+            {
+                return ndotl * (1.0 - exp(-scatterDensity * (ndotl + ndotv) / (ndotl * ndotv))) / (ndotl + ndotv);
+            }
+
+            float SoftenNdotL(float ndotl, float n, float w)
+            {
+                float val = (ndotl + 0.2) / 1.2;
+                return 1.25 * val * val;
+                //return (1 + n) / (2 * (1 + w)) * pow(max(ndotl + w, 0) / (1 + w), n);
+            }
+
             float4 LitPassFrag(Varyings input) : SV_TARGET
             {
                 UNITY_SETUP_INSTANCE_ID(input);
@@ -157,13 +179,16 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 float3 bitangentWS = cross(input.normalWS, input.tangentWS.xyz) * input.tangentWS.w;
                 float3x3 tbn = float3x3(normalize(input.tangentWS.xyz), normalize(bitangentWS), normalize(input.normalWS));
                 float3 normalWS = mul(normalMap, tbn);
+                normalWS = normalize(normalWS);
 
                 //material properties
-                float4 baseMap = tex2D(_BaseMap, input.uv);
+                float4 baseMap = tex2D(_BaseMap, input.uv) * _BaseColor;
                 float roughnessMap = tex2D(_RoughnessMap, input.uv).r;
                 float roughness = max(roughnessMap * _RoughnessIntensity, 1e-2);
                 float metallicMap = tex2D(_MetallicMap, input.uv).r;
                 float metallic = metallicMap * _MetallicIntensity;
+                float fuzzMap = tex2D(_FuzzMap, input.uv).r;
+                float fuzziness = fuzzMap * _FuzzIntensity;
 
                 float oneMinusReflectivity = kDieletricSpec.a * (1 - metallic);
                 float reflectivity = 1.0 - oneMinusReflectivity;
@@ -178,24 +203,29 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 float3 giSpecular = GlossyEnvironmentReflection(reflectVector, positionWS, roughness, 1.0);
 
                 //directional lights
-                float3 directDiffuse = diffuse;
-                float3 directSpecular = GGXBRDF(mainLight.direction, viewDirWS, normalWS, specular, roughness);
-                float ndotl = saturate(dot(mainLight.direction, normalWS));
+                float ndotl = dot(normalWS, mainLight.direction);
+                float softNdotL = SoftenNdotL(ndotl, 2, 0.2);
+                ndotl = max(ndotl, 0.0);
+                float ndotv = max(dot(normalWS, viewDirWS), 1e-4);
                 float atten = mainLight.shadowAttenuation;
+                float gScatter = GScatter(ndotv, softNdotL, _ScatterDensity);
+                float3 directDiffuse = diffuse * mainLight.color * atten * lerp(ndotl, _FuzzColor * gScatter * 5.0 * softNdotL, fuzziness);
+                float tempRoughness = lerp(roughness, 1.0, fuzziness);
+                float3 directSpecular = GGXBRDF(mainLight.direction, viewDirWS, normalWS, specular, tempRoughness);
 
                 //indirectional lights
-                float3 indirectDiffse = giDiffuse * diffuse;
-                float surfaceReduction = rcp(roughness * roughness + 1.0);
-                float grazingTerm = saturate(1.0 - roughness + reflectivity);
-                float ndotv = saturate(dot(normalWS, viewDirWS));
+                float indirectionalScatter = GScatter(ndotv, 1.0, _ScatterDensity);
+                float3 indirectDiffse = giDiffuse * diffuse * lerp(1.0, _FuzzColor * indirectionalScatter * 5.0, fuzziness);
+                float surfaceReduction = rcp(tempRoughness * tempRoughness + 1.0);
+                float grazingTerm = saturate(1.0 - tempRoughness + reflectivity);
                 float fresnelTerm = pow(1.0 - ndotv, 5.0);
                 float3 indirectSpecular = giSpecular * surfaceReduction * lerp(specular, grazingTerm, fresnelTerm);
 
                 //final compose
-                float3 directBRDF = (directDiffuse + directSpecular) * mainLight.color * atten * ndotl;;//(directSpecular + directDiffuse) * mainLight.color * atten * ndotl;
+                float3 directBRDF = directDiffuse + directSpecular * mainLight.color * atten * ndotl;
                 float3 indirectBRDF = indirectDiffse + indirectSpecular;
-
                 float3 finalColor = directBRDF + indirectBRDF;
+
                 return float4(finalColor, 1.0);
             }
 
