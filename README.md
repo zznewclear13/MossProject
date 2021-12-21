@@ -59,4 +59,4 @@ Sucker Punch Productions对马岛之魂的技术分享：[Samurai Shading in Gho
 
 ## 许可
 
-[GNU General Public License v3.0](https://github.com/zznewclear13/MossProject/blob/main/LICENSE)
+GNU General Public License v3.0
