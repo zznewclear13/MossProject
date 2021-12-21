@@ -56,3 +56,7 @@
 顽皮狗神秘海域4的技术分享：[The Technical Art of Uncharted 4](http://advances.realtimerendering.com/other/2016/naughty_dog/)
 
 Sucker Punch Productions对马岛之魂的技术分享：[Samurai Shading in Ghost of Tsuma](https://blog.selfshadow.com/publications/s2020-shading-course/patry/slides/index.html)
+
+## 许可
+
+[GNU General Public License v3.0](https://github.com/zznewclear13/MossProject/blob/main/LICENSE)
