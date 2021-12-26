@@ -22,11 +22,11 @@ Shader "zznewclear13/BasicGGXBRDFShader"
     sampler2D _RoughnessMap;
     sampler2D _MetallicMap;
     CBUFFER_START(UnityPerMaterial)
-    float4 _BaseColor;
-    float4 _BaseMap_ST;
-    float _BumpIntensity;
-    float _RoughnessIntensity;
-    float _MetallicIntensity;
+        float4 _BaseColor;
+        float4 _BaseMap_ST;
+        float _BumpIntensity;
+        float _RoughnessIntensity;
+        float _MetallicIntensity;
     CBUFFER_END
 
     ENDHLSL
@@ -45,7 +45,8 @@ Shader "zznewclear13/BasicGGXBRDFShader"
 
             #pragma shader_feature_local _NORMALMAP
 
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ LIGHTMAP_SHADOW_MIXING
             #pragma multi_compile _ SHADOWS_SHADOWMASK       
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
@@ -81,16 +82,16 @@ Shader "zznewclear13/BasicGGXBRDFShader"
 
             float D(float ndoth, float roughness)
             {
-                float a2 = roughness * roughness;
-                float d = max(1e-16, ndoth * ndoth * (a2 - 1) + 1);
-                return a2 * rcp(d * d);
+                float a = ndoth * roughness;
+                float k = roughness / (1.0 - ndoth * ndoth + a * a);
+                return k * k;
             }
 
             float G(float ndotl, float ndotv, float roughness)
             {
                 float a2 = roughness * roughness;
-                float gv = ndotv * sqrt((ndotl - a2 * ndotl) * ndotl + a2);
-                float gl = ndotl * sqrt((ndotv - a2 * ndotv) * ndotl + a2);
+                float gv = ndotv * sqrt((1.0 - a2) * ndotl * ndotl + a2);
+                float gl = ndotl * sqrt((1.0 - a2) * ndotv * ndotv + a2);
                 return 0.5 * rcp(gv + gl);
             }
 
@@ -99,10 +100,11 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 return specular + (1 - specular) * pow(1 - hdotl, 5);
             }
 
+            //[GGX BRDF](https://google.github.io/filament/Filament.html)
             float3 GGXBRDF(float3 wi, float3 wo, float3 normal, float3 specular, float roughness)
             {
                 float3 h = normalize(wi + wo);
-                float ndotv = abs(dot(normal, wo)) + 1e-5;
+                float ndotv = max(dot(normal, wo), 1e-5);
                 float ndoth = max(dot(normal, h), 0.0);
                 float ndotl = max(dot(normal, wi), 0.0);
                 float hdotl = max(dot(h, wi), 0.0);
@@ -155,7 +157,7 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 float3 normalMap = UnpackNormal(tex2D(_BumpMap, input.uv));
                 normalMap.xy *= _BumpIntensity;
                 float3 bitangentWS = cross(input.normalWS, input.tangentWS.xyz) * input.tangentWS.w;
-                float3x3 tbn = float3x3(normalize(input.tangentWS.xyz), normalize(bitangentWS), normalize(input.normalWS));
+                float3x3 tbn = float3x3(input.tangentWS.xyz, bitangentWS, input.normalWS);
                 float3 normalWS = mul(normalMap, tbn);
 
                 //material properties

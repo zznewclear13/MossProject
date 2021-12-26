@@ -2,38 +2,30 @@ Shader "zznewclear13/FuzzShader"
 {
     Properties
     {
+        [Header(Basic Material Properties)]
         _BaseColor("Base Color", color) = (1, 1, 1, 1)
         _BaseMap("Base Map", 2D) = "white" {}
-
         _BumpMap("Bump Map", 2D) = "bump" {}
         _BumpIntensity("Bump Intensity", range(0, 1)) = 1
         _RoughnessMap("Roughness Map", 2D) = "white" {}
         _RoughnessIntensity("Roughness Intensity", range(0, 1)) = 1
-        _MetallicMap("Metallic Map", 2D) = "black" {}
-        _MetallicIntensity("Metallic Intensity", range(0, 1)) = 1
+        _MetallicIntensity("Metallic Intensity", range(0, 1)) = 0
 
+        [Header(Fuzz Properties)]
         _FuzzColor("Fuzz Color", color) = (1, 1, 1, 1)
         _FuzzMap("Fuzz Map", 2D) = "black" {}
         _FuzzIntensity("Fuzz Intensity", range(0, 1)) = 1
         _ScatterDensity("Scattering Density", range(0, 0.2)) = 0.1
-
-        _DecalTex("Decal Texture", 2D) = "black" {}
-        _DecalHeight("Decal Height", float) = 0.1
-        _DecalBumpMap("Decal Bump Map", 2D) = "bump" {}
-        _DecalBumpIntensity("Decal Bump Intensiy", range(0, 1)) = 1
     }
 
     HLSLINCLUDE
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
     #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-
+    
     sampler2D _BaseMap;
     sampler2D _BumpMap;
     sampler2D _RoughnessMap;
-    sampler2D _MetallicMap;
     sampler2D _FuzzMap;
-    sampler2D _DecalTex;
-    sampler2D _DecalBumpMap;
 
     CBUFFER_START(UnityPerMaterial)
         float4 _BaseColor;
@@ -45,11 +37,6 @@ Shader "zznewclear13/FuzzShader"
         float4 _FuzzColor;
         float _FuzzIntensity;
         float _ScatterDensity;
-
-        float4 _DecalTex_TexelSize;
-        float4 _DecalTex_ST;
-        float _DecalHeight;
-        float _DecalBumpIntensity;
     CBUFFER_END
 
     ENDHLSL
@@ -57,10 +44,12 @@ Shader "zznewclear13/FuzzShader"
     SubShader
     {
         Tags{ "RenderType" = "Opaque"}
+
         Pass
         {
             Name "ForwardLit"
             Tags{"LightMode" = "UniversalForward"}
+
             HLSLPROGRAM
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
@@ -71,7 +60,6 @@ Shader "zznewclear13/FuzzShader"
             #pragma multi_compile _ LIGHTMAP_SHADOW_MIXING
             #pragma multi_compile _ SHADOWS_SHADOWMASK       
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
-
             #pragma multi_compile _ LIGHTMAP_ON
 
             #pragma vertex LitPassVertex
@@ -121,6 +109,7 @@ Shader "zznewclear13/FuzzShader"
                 return specular + (1 - specular) * pow(1 - hdotl, 5);
             }
 
+            //[GGX BRDF](https://google.github.io/filament/Filament.html)
             float3 GGXBRDF(float3 wi, float3 wo, float3 normal, float3 specular, float roughness)
             {
                 float3 h = normalize(wi + wo);
@@ -134,6 +123,19 @@ Shader "zznewclear13/FuzzShader"
                 float3 f = F(specular, hdotl);
 
                 return d * g * f;
+            }
+
+            //[Samurai Shading in Ghost of Tsuma](https://blog.selfshadow.com/publications/s2020-shading-course/patry/slides/index.html)
+            float GScatter(float ndotv, float ndotl, float scatterDensity)
+            {
+                return ndotl * (1.0 - exp(-scatterDensity * (ndotl + ndotv) / (ndotl * ndotv))) / (ndotl + ndotv);
+            }
+
+            //Extension to energy-conserving wrapped diffuse, Steve McAuley
+            float SoftenNdotL(float ndotl)
+            {
+                float val = (ndotl + 0.2) / 1.2;
+                return 1.25 * val * val;
             }
 
             Varyings LitPassVertex(Attributes input)
@@ -152,22 +154,11 @@ Shader "zznewclear13/FuzzShader"
                 output.normalWS = normalInput.normalWS;
                 output.tangentWS = float4(normalInput.tangentWS, input.tangentOS.w);
                 output.shadowCoord = TransformWorldToShadowCoord(vertexInput.positionWS);
-
+                
                 OUTPUT_LIGHTMAP_UV(input.staticLightmapUV, unity_LightmapST, output.staticLightmapUV);
                 OUTPUT_SH(normalInput.normalWS.xyz, output.vertexSH);
 
                 return output;
-            }
-
-            float GScatter(float ndotv, float ndotl, float scatterDensity)
-            {
-                return ndotl * (1.0 - exp(-scatterDensity * (ndotl + ndotv) / (ndotl * ndotv))) / (ndotl + ndotv);
-            }
-
-            float SoftenNdotL(float ndotl)
-            {
-                float val = (ndotl + 0.2) / 1.2;
-                return 1.25 * val * val;
             }
 
             float4 LitPassFragment(Varyings input) : SV_TARGET
@@ -178,41 +169,30 @@ Shader "zznewclear13/FuzzShader"
                 //wo
                 float3 positionWS = input.positionWS;
                 float3 viewDirWS = GetWorldSpaceNormalizeViewDir(positionWS);
-
+                
                 //wi
                 float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
                 float4 shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
                 Light mainLight = GetMainLight(shadowCoord, positionWS, shadowMask);
 
-                float3 bitangentWS = cross(input.normalWS, input.tangentWS.xyz) * input.tangentWS.w;
-                float3x3 tbn = float3x3(normalize(input.tangentWS.xyz), normalize(bitangentWS), normalize(input.normalWS));
-                float3 lightDirTS = mul(tbn, mainLight.direction);
-                lightDirTS.xy *= rcp(max(lightDirTS.z, 0.5));
-                float2 decalOffset = _DecalTex_TexelSize.xy * lightDirTS.xy;
-                float2 decalUV = input.uv * _DecalTex_ST.xy + _DecalTex_ST.zw;
-                float4 decalTex = tex2D(_DecalTex, decalUV);
-
                 //normal
+                float3 bitangentWS = cross(input.normalWS, input.tangentWS.xyz) * input.tangentWS.w;
+                float3x3 tbn = float3x3(input.tangentWS.xyz, bitangentWS, input.normalWS);
                 float3 normalMap = UnpackNormal(tex2D(_BumpMap, input.uv));
-                float3 decalNormalMap = UnpackNormal(tex2D(_DecalBumpMap, decalUV));
-                float2 normalXY = lerp(normalMap.xy * _BumpIntensity, decalNormalMap.xy * _DecalBumpIntensity, decalTex.a);
+                float2 normalXY = normalMap.xy * _BumpIntensity;
                 normalMap = normalize(float3(normalXY, 1.0));
                 float3 normalWS = mul(normalMap, tbn);
                 normalWS = normalize(normalWS);
 
                 //material properties
+                float metallic = _MetallicIntensity;
                 float4 baseMap = tex2D(_BaseMap, input.uv) * _BaseColor;
                 float roughnessMap = tex2D(_RoughnessMap, input.uv).r;
                 float roughness = max(roughnessMap * _RoughnessIntensity, 1e-2);
-                float metallicMap = tex2D(_MetallicMap, input.uv).r;
-                float metallic = metallicMap * _MetallicIntensity;
                 float fuzzMap = tex2D(_FuzzMap, input.uv).r;
-                float fuzziness = fuzzMap * _FuzzIntensity * (1.0 - decalTex.a);
-
-                float decalShadow = tex2D(_DecalTex, decalUV + decalOffset * _DecalHeight).a;
-                baseMap.rgb = lerp(baseMap.rgb, decalTex.rgb, decalTex.a);
-                decalShadow = max(decalTex.a, 1 - decalShadow);
-
+                float fuzziness = fuzzMap * _FuzzIntensity;
+                
+                //f90, f0
                 float oneMinusReflectivity = kDieletricSpec.a * (1 - metallic);
                 float reflectivity = 1.0 - oneMinusReflectivity;
                 float3 diffuse = baseMap.rgb * oneMinusReflectivity;
@@ -230,23 +210,27 @@ Shader "zznewclear13/FuzzShader"
                 float softNdotL = SoftenNdotL(ndotl);
                 ndotl = max(ndotl, 0.0);
                 float ndotv = max(dot(normalWS, viewDirWS), 1e-4);
-                float atten = mainLight.shadowAttenuation * decalShadow;
+                float atten = mainLight.shadowAttenuation;
+
+                //Fuzz Diffuse Functions
                 float gScatter = GScatter(ndotv, softNdotL, _ScatterDensity);
-                float3 directDiffuse = diffuse * mainLight.color * atten * lerp(ndotl, _FuzzColor * gScatter * 5.0 * softNdotL, fuzziness);
+                float3 directDiffuse = diffuse * mainLight.color * atten * lerp(ndotl, _FuzzColor.rgb * gScatter * 5.0 * softNdotL, fuzziness);
                 float tempRoughness = lerp(roughness, 1.0, fuzziness);
                 float3 directSpecular = GGXBRDF(mainLight.direction, viewDirWS, normalWS, specular, tempRoughness);
 
                 //indirectional lights
                 float indirectionalScatter = GScatter(ndotv, 1.0, _ScatterDensity);
-                float3 indirectDiffse = giDiffuse * diffuse * lerp(1.0, _FuzzColor * indirectionalScatter * 5.0, fuzziness);
+                float3 indirectDiffse = giDiffuse * diffuse * lerp(1.0, _FuzzColor.rgb * indirectionalScatter * 5.0, fuzziness);
                 float surfaceReduction = rcp(tempRoughness * tempRoughness + 1.0);
                 float grazingTerm = saturate(1.0 - tempRoughness + reflectivity);
                 float fresnelTerm = pow(1.0 - ndotv, 5.0);
                 float3 indirectSpecular = giSpecular * surfaceReduction * lerp(specular, grazingTerm, fresnelTerm);
 
                 //final compose
-                float3 directBRDF = directDiffuse + directSpecular * mainLight.color * atten * ndotl;
-                float3 indirectBRDF = indirectDiffse + indirectSpecular;
+                float3 directBRDF = directDiffuse;
+                float3 indirectBRDF = indirectDiffse;
+                directBRDF += directSpecular * mainLight.color * atten * ndotl;
+                indirectBRDF += indirectSpecular;
                 float3 finalColor = directBRDF + indirectBRDF;
 
                 return float4(finalColor, 1.0);
@@ -254,18 +238,19 @@ Shader "zznewclear13/FuzzShader"
 
             ENDHLSL
         }
+
         Pass
         {
             Name "ShadowCaster"
-            Tags{ "LightMode" = "ShadowCaster" }
+            Tags{"LightMode" = "ShadowCaster"}
 
-                HLSLPROGRAM
+            HLSLPROGRAM
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/CommonMaterial.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
             #pragma vertex ShadowPassVertex
             #pragma fragment ShadowPassFragment
 
-                float3 _LightDirection;
+            float3 _LightDirection;
 
             struct Attributes
             {
@@ -295,12 +280,12 @@ Shader "zznewclear13/FuzzShader"
                 return output;
             }
 
-            half4 ShadowPassFragment(Varyings input) : SV_TARGET
+            float4 ShadowPassFragment(Varyings input) : SV_TARGET
             {
                 return 0.0;
             }
 
-                ENDHLSL
+            ENDHLSL
         }
 
         Pass
@@ -338,7 +323,7 @@ Shader "zznewclear13/FuzzShader"
                 return output;
             }
 
-            half4 DepthOnlyFragment(Varyings input) : SV_TARGET
+            float4 DepthOnlyFragment(Varyings input) : SV_TARGET
             {
                 return 0.0;
             }
@@ -380,14 +365,13 @@ Shader "zznewclear13/FuzzShader"
                 return output;
             }
 
-            half4 MetaFragment(Varyings input) : SV_Target
+            float4 MetaFragment(Varyings input) : SV_Target
             {
                 //material properties
                 float4 baseMap = tex2D(_BaseMap, input.uv);
                 float roughnessMap = tex2D(_RoughnessMap, input.uv).r;
                 float roughness = max(roughnessMap * _RoughnessIntensity, 1e-2);
-                float metallicMap = tex2D(_MetallicMap, input.uv).r;
-                float metallic = metallicMap * _MetallicIntensity;
+                float metallic = _MetallicIntensity;
 
                 float oneMinusReflectivity = kDieletricSpec.a * (1 - metallic);
                 float reflectivity = 1.0 - oneMinusReflectivity;

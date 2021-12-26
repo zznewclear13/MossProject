@@ -133,6 +133,7 @@ Shader "zznewclear13/ToonShader"
                 return specular + (1 - specular) * pow(1 - hdotl, 5);
             }
 
+            //[GGX BRDF](https://google.github.io/filament/Filament.html)
             float3 GGXBRDF(float3 wi, float3 wo, float3 normal, float3 specular, float roughness)
             {
                 float3 h = normalize(wi + wo);
@@ -268,9 +269,10 @@ Shader "zznewclear13/ToonShader"
 #if PLATFORM_PC && ENABLE_DECAL
                 atten *= decalShadow;
 #endif
+
                 //Fuzz Diffuse Functions
                 half gScatter = GScatter(ndotv, softNdotL, _ScatterDensity);
-                half3 directDiffuse = diffuse * mainLight.color * atten * lerp(ndotl, _FuzzColor * gScatter * 5.0 * softNdotL, fuzziness);
+                half3 directDiffuse = diffuse * mainLight.color * atten * lerp(ndotl, _FuzzColor.rgb * gScatter * 5.0 * softNdotL, fuzziness);
 #if PLATFORM_PC
                 half tempRoughness = lerp(roughness, 1.0, fuzziness);
                 half3 directSpecular = GGXBRDF(mainLight.direction, viewDirWS, normalWS, specular, tempRoughness);
@@ -278,7 +280,7 @@ Shader "zznewclear13/ToonShader"
 
                 //indirectional lights
                 half indirectionalScatter = GScatter(ndotv, 1.0, _ScatterDensity);
-                half3 indirectDiffse = giDiffuse * diffuse * lerp(1.0, _FuzzColor * indirectionalScatter * 5.0, fuzziness);
+                half3 indirectDiffse = giDiffuse * diffuse * lerp(1.0, _FuzzColor.rgb * indirectionalScatter * 5.0, fuzziness);
 #if PLATFORM_PC
                 half surfaceReduction = rcp(tempRoughness * tempRoughness + 1.0);
                 half grazingTerm = saturate(1.0 - tempRoughness + reflectivity);

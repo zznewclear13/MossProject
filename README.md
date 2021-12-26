@@ -4,6 +4,15 @@
 
 工程为Unity 2020.3.25f1(LTS)的默认SRP工程，低于或高于此版本可能会有URP Shader API的变化产生的错误。
 
+## 使用方法
+
+在Unity 2020.3.25f1(LTS)中新建一个Universal Render Pipeline项目，通过Assets -> Import Package -> Custom Package...导入MossScene.unitypackage文件。打开Assets/MossScene下的MossScene.unity场景。
+
+## 包含的文件
+
+1. ToneShader和FuzzShader两个Shader文件，其中ToneShader是更具有卡通效果和移动端优化的Shader。
+2. MossyLog和Decal两个MegaScans的美术素材，略有修改。
+
 ## 支持的功能
 
 1. 支持产生阴影和承接阴影。
@@ -43,7 +52,7 @@
 20. _DecalRoughnessMap，贴花粗糙度贴图，红通道为粗糙度。
 21. _DecalRoughnessIntensity，贴花粗糙度贴图的强度。
 
-## 美术素材
+## 美术素材说明
 
 美术素材来源MegaScans，略有PS修改。
 
