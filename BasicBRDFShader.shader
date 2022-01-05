@@ -159,6 +159,7 @@ Shader "zznewclear13/BasicGGXBRDFShader"
                 float3 bitangentWS = cross(input.normalWS, input.tangentWS.xyz) * input.tangentWS.w;
                 float3x3 tbn = float3x3(input.tangentWS.xyz, bitangentWS, input.normalWS);
                 float3 normalWS = mul(normalMap, tbn);
+                normalWS = normalize(normalWS);
 
                 //material properties
                 float4 baseMap = tex2D(_BaseMap, input.uv);
